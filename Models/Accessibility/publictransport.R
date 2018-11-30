@@ -18,16 +18,18 @@ resdir=paste0(Sys.getenv('CS_HOME'),'/ChinaAccessibility/Results/TCAccess/');dir
 
 popraster = raster(x = paste0(Sys.getenv('CS_HOME'),'/ChinaAccessibility/Data/population/PopulationGrid_China2010.tif'))
 
+# speeds for transportation network : metro = 50km.h-1 (0.0012 min.m-1) ; connectors ~ walking/bus = 10km.h-1 (0.006 min.m-1)
+
 avgrelaccesses=c();accesshierarchies=c();decays=c();years=c();ccities=c()
 # construct graphs
 for(city in cities){
-  # city="beijing"
+  # city="guangzhou"
   show(city)
   trgraph=addTransportationLayer(link_layer = paste0(datadir,city),speed=0.0012,snap=200,
                                  e_attr_names=c("year"),reprojection=crs(popraster))
   if(city=='guangzhou'){
     # specific case of guangzhou-foshan
-    trgraph=addTransportationLayer(trgraph,link_layer = paste0(datadir,'foshan'),speed=0.0012,snap=200,
+    trgraph=addTransportationLayer(g=trgraph,link_layer = paste0(datadir,'foshan'),speed=0.0012,snap=200,
                                  e_attr_names=c("year"),reprojection=crs(popraster))
   }
   #components(trgraph)
@@ -41,11 +43,13 @@ for(city in cities){
                       pop=getValuesBlock(popraster,row=minrow,nrows=maxrow-minrow+1,col=mincol,ncols=maxcol-mincol+1)))
   #g=ggplot(popdf,aes(x=x,y=y,fill=pop))
   #g+geom_raster()
+  popdf$pop[is.na(popdf$pop)]=0
   poppoints = SpatialPointsDataFrame(popdf[popdf$pop>0,c("x","y")],popdf[popdf$pop>0,])
   poppoints$id = as.character(1:length(poppoints))
-  #fullgraph = addAdministrativeLayer(trgraph,poppoints,connect_speed = 0.006,attributes=list("pop"="pop","id"="id"))
+  fullgraph = addAdministrativeLayer(trgraph,poppoints,connect_speed = 0.006,attributes=list("pop"="pop","id"="id"))
   #plot(fullgraph,vertex.size=0,vertex.label=NA,edge.width=1/(50*E(fullgraph)$speed))
   # -> for accurate computation of accessibility each year, should redo the connection each year
+  save(fullgraph,file=paste0(datadir,'processed/',city,'.RData'))
   
   # year by year
   for(year in unique(E(trgraph)$year)){
@@ -70,7 +74,8 @@ for(city in cities){
     
       #res = rbind(res,c(avgrelaccess=avgrelaccess,accesshierarchy=accesshierarchy,decay=decay,city=city,year=year))
       avgrelaccesses=append(avgrelaccesses,avgrelaccess);accesshierarchies=append(accesshierarchies,accesshierarchy)
-      decays=append(decays,decay);ccities=append(ccities,city);years=append(years,year)
+      decays=append(decays,decay);years=append(years,year)
+      ccities=append(ccities,paste0(toupper(substring(city,1,1)),substring(city,2,nchar(city))))
       
       # TODO add some maps -> access gains ? avgrelaccess ? (comparable scale !)
       
@@ -80,17 +85,46 @@ for(city in cities){
 }
 
 res=data.frame(accesshierarchy=accesshierarchies,avgrelaccess=avgrelaccesses,decay=decays,year=years,city=ccities)
+res = res[res$year>1000,]
 
 g=ggplot(res,aes(x=year,y=accesshierarchy,colour=city,group=interaction(city,decay),linetype=as.character(decay),shape=as.character(decay)))
-g+geom_point()+geom_line()+xlab("year")+ylab("Hierarchy of accessibility")+
+g+geom_point()+geom_line()+
+  xlab("year")+ylab("Hierarchy of accessibility")+
   scale_shape_discrete(name="Decay")+scale_linetype_discrete(name="Decay")+
   scale_color_discrete(name="City")+
   stdtheme
-ggsave(file=paste0(resdir,'test_accesshierarchy.png'),width=15,height=10,units='cm')
-# TODO capitalize cities
+ggsave(file=paste0(resdir,'accesshierarchy_all.png'),width=20,height=15,units='cm')
+
+
+g=ggplot(res,aes(x=year,y=accesshierarchy,group=as.character(decay),colour=as.character(decay)))
+g+geom_point()+geom_line()+facet_wrap(~city,scales='free')+
+  xlab("Year")+ylab("Hierarchy of accessibility")+
+  scale_color_discrete(name="Decay")+
+  stdtheme
+ggsave(file=paste0(resdir,'accesshierarchy_facet.png'),width=40,height=35,units='cm')
+
+
+# after 2000 ? no need in facet
+
 
 g=ggplot(res,aes(x=year,y=avgrelaccess,colour=city,group=interaction(city,decay),linetype=as.character(decay),shape=as.character(decay)))
-g+geom_point()+geom_line()+xlab("year")+ylab("Average relative accessibility")+stdtheme
-ggsave(file=paste0(resdir,'test_avgaccess.png'),width=15,height=10,units='cm')
+g+geom_point()+geom_line()+
+  xlab("year")+ylab("Average relative accessibility")+
+  scale_shape_discrete(name="Decay")+scale_linetype_discrete(name="Decay")+
+  scale_color_discrete(name="City")+
+  stdtheme
+ggsave(file=paste0(resdir,'avgaccess.png'),width=20,height=15,units='cm')
+
+
+g=ggplot(res,aes(x=year,y=avgrelaccess,group=as.character(decay),colour=as.character(decay)))
+g+geom_point()+geom_line()+facet_wrap(~city,scales='free')+
+  xlab("Year")+ylab("Average relative accessibility")+
+  scale_color_discrete(name="Decay")+
+  stdtheme
+ggsave(file=paste0(resdir,'avgaccess_facet.png'),width=40,height=35,units='cm')
+
+
+# TODO : summary statistics : length, lines, coverage = f(t)
+
 
 
