@@ -49,42 +49,6 @@ getPopPoints <- function(popraster,currentbbox,year){
 }
 
 
-# construct graphs
-# city = 'Xian'
-for(city in cities){
-  
-  show(city)
-  
-  currentextent = fuas[fuas$FUA_area%in%fuaids[[city]]&fuas$eFUA_name==fuanames[[city]],]
-  currentbbox = st_bbox(currentextent)
-  
-  trgraph=addTransportationLayer(link_layer = paste0(datadir,ptlayers[[city]]),speed=0.0012,snap=200,
-                                 e_attr_names=c("year"),reprojection=crs(pop90))
-  if(city=='Guangzhou'){
-    # specific case of guangzhou-foshan
-    trgraph=addTransportationLayer(g=trgraph,link_layer = paste0(datadir,'foshan'),speed=0.0012,snap=200,
-                                   e_attr_names=c("year"),reprojection=crs(pop90))
-  }
- 
-  
-  # add population points (for each year)
-  fullgraph=trgraph
-  for(year in c("1990","2000","2015")){
-    show(year)
-    popraster = populations[[year]]
-    poppoints = getPopPoints(popraster,currentbbox)
-    # issue with calling addPoints with null empty graph heuristic
-    fullgraph = addAdministrativeLayer(fullgraph,poppoints,connect_speed = 0.006,attributes=list("pop"="pop","id"="id","year"="year"),empty_graph_heuristic="NA")
-  }
-  
-  show(max(E(fullgraph)$year,na.rm=T))
-  
-  save(fullgraph,file=paste0(datadir,'processed/',city,'_multiyearGHSL.RData'))
-   
-}
-
-
-
 
 
 access=c();
@@ -97,12 +61,31 @@ decay = 60
 for(city in cities){
   
   # compute at different network stages -> 1990 (! no nw?) -> 2000 (or min date); 2015; 2030?
-  load(paste0(datadir,'processed/',city,'_multiyearGHSL.RData'))
+  #load(paste0(datadir,'processed/',city,'_multiyearGHSL.RData'))
   #show(summary(E(fullgraph)$year))
   
   currentextent = fuas[fuas$FUA_area%in%fuaids[[city]]&fuas$eFUA_name==fuanames[[city]],]
   currentbbox = st_bbox(currentextent)
   
+  trgraph=addTransportationLayer(link_layer = paste0(datadir,ptlayers[[city]]),speed=0.17,snap=500, # speed=0.0012
+                                 e_attr_names=c("year"),reprojection=crs(pop90))
+  if(city=='Guangzhou'){
+    # specific case of guangzhou-foshan
+    trgraph=addTransportationLayer(g=trgraph,link_layer = paste0(datadir,'foshan'),speed=0.17,snap=500,
+                                   e_attr_names=c("year"),reprojection=crs(pop90))
+  }
+  
+  fullgraph=trgraph
+  #for(year in c("1990","2000","2015")){
+  # 
+  #  popraster = populations[[year]]
+  #  poppoints = getPopPoints(popraster,currentbbox)
+  #  # issue with calling addPoints with null empty graph heuristic
+  #  fullgraph = addAdministrativeLayer(fullgraph,poppoints,connect_speed = 0.006,attributes=list("pop"="pop","id"="id","year"="year"),empty_graph_heuristic="NA")
+  #}
+  #save(fullgraph,file=paste0(datadir,'processed/',city,'_multiyearGHSL.RData'))
+  
+  # year=2030
   for(year in c(2000,2015,2030)){
     currentyear=year
     if(year==2000){currentyear=max(c(min(E(fullgraph)$year,na.rm = T),year))}
@@ -112,12 +95,13 @@ for(city in cities){
     popyear = ifelse(currentyear<2015,"2000","2015")
     popraster = populations[[popyear]]
     poppoints = getPopPoints(popraster,currentbbox,year)
-    currentgraph = addAdministrativeLayer(currentgraph,poppoints,connect_speed = 0.006,attributes=list("pop"="pop","id"="id","year"="year"),empty_graph_heuristic="NA")
+    currentgraph = addAdministrativeLayer(currentgraph,poppoints,connect_speed = 0.33,attributes=list("pop"="pop","id"="id","year"="year"),empty_graph_heuristic="NA")
     dmat = distances(graph = currentgraph,v=V(currentgraph)[!is.na(V(currentgraph)$pop)],to=V(currentgraph)[!is.na(V(currentgraph)$pop)],weights = E(currentgraph)$speed*E(currentgraph)$length)
     
     access = computeAccess(accessorigdata = data.frame(id=rownames(dmat),var=rep(1,nrow(dmat)),year=rep(currentyear,nrow(dmat))),
-                           accessdestdata = data.frame(id=rownames(dmat),var=as.numeric(V(currentgraph)$pop[!is.na(V(currentgraph)$pop)]),year=rep(currentyear,nrow(dmat))) ,
-                           matfun=exp(-dmat/decay)
+                           #accessdestdata = data.frame(id=rownames(dmat),var=as.numeric(V(currentgraph)$pop[!is.na(V(currentgraph)$pop)]),year=rep(currentyear,nrow(dmat))) ,
+                           accessdestdata = data.frame(id=rownames(dmat),var=rep(1,nrow(dmat)),year=rep(currentyear,nrow(dmat))),
+                          matfun=exp(-dmat/decay)
     )
     
     
