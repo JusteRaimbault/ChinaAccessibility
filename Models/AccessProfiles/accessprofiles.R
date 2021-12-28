@@ -4,12 +4,13 @@ setwd(paste0(Sys.getenv('CS_HOME'),'/NetworksTerritories/ChinaAccessibility/Mode
 library(raster)
 library(ggplot2)
 library(sf)
+library(dplyr)
 
-source(paste0(Sys.getenv('CN_HOME'),'/Models/TransportationNetwork/NetworkAnalysis/network.R'))
-source(paste0(Sys.getenv('CN_HOME'),'/Models/SpatioTempCausality/functions.R'))
+source('network.R')
 source(paste0(Sys.getenv('CS_HOME'),'/Organisation/Models/Utils/R/plots.R'))
 
 cities = c("Beijing","Chengdu","Chongqing","Guangzhou","Nanjing","Shanghai","Shenzhen","Wuhan","Xian")
+# cities = c("Shanghai","Shenzhen","Wuhan","Xian")
 
 ptlayers = list("Beijing"="beijing","Chengdu"="chengdu","Chongqing"="chongqing","Guangzhou"="guangzhou","Nanjing"="nanjing","Shanghai"="shanghai","Shenzhen"="shenzhen","Wuhan"="wuhan","Xian"="xian")
 
@@ -51,9 +52,9 @@ getPopPoints <- function(popraster,currentbbox,year){
 
 
 
-access=c();
+#access=c();
 #decays=c(); # compute access with fixed decay here -> 60min
-years=c();ccities=c();radius=c()
+#years=c();ccities=c();radius=c()
 
 
 decay = 60
@@ -67,11 +68,13 @@ for(city in cities){
   currentextent = fuas[fuas$FUA_area%in%fuaids[[city]]&fuas$eFUA_name==fuanames[[city]],]
   currentbbox = st_bbox(currentextent)
   
-  trgraph=addTransportationLayer(link_layer = paste0(datadir,ptlayers[[city]]),speed=0.17,snap=500, # speed=0.0012
+  xcenter = st_coordinates(st_centroid(currentextent))[1];ycenter=st_coordinates(st_centroid(currentextent))[2]
+  
+  trgraph=addTransportationLayer(link_layer = paste0(datadir,ptlayers[[city]]),speed=0.0012,snap=500,
                                  e_attr_names=c("year"),reprojection=crs(pop90))
   if(city=='Guangzhou'){
     # specific case of guangzhou-foshan
-    trgraph=addTransportationLayer(g=trgraph,link_layer = paste0(datadir,'foshan'),speed=0.17,snap=500,
+    trgraph=addTransportationLayer(g=trgraph,link_layer = paste0(datadir,'foshan'),speed=0.0012,snap=500,
                                    e_attr_names=c("year"),reprojection=crs(pop90))
   }
   
@@ -86,6 +89,10 @@ for(city in cities){
   #save(fullgraph,file=paste0(datadir,'processed/',city,'_multiyearGHSL.RData'))
   
   # year=2030
+  
+  # data for profile plots
+  pops=c();accesses=c();dists=c();years=c()
+  
   for(year in c(2000,2015,2030)){
     currentyear=year
     if(year==2000){currentyear=max(c(min(E(fullgraph)$year,na.rm = T),year))}
@@ -95,8 +102,9 @@ for(city in cities){
     popyear = ifelse(currentyear<2015,"2000","2015")
     popraster = populations[[popyear]]
     poppoints = getPopPoints(popraster,currentbbox,year)
-    currentgraph = addAdministrativeLayer(currentgraph,poppoints,connect_speed = 0.33,attributes=list("pop"="pop","id"="id","year"="year"),empty_graph_heuristic="NA")
-    dmat = distances(graph = currentgraph,v=V(currentgraph)[!is.na(V(currentgraph)$pop)],to=V(currentgraph)[!is.na(V(currentgraph)$pop)],weights = E(currentgraph)$speed*E(currentgraph)$length)
+    currentgraph = addAdministrativeLayer(currentgraph,poppoints,connect_speed = 0.002,attributes=list("pop"="pop","id"="id","year"="year"),empty_graph_heuristic="NA")
+    dmat = distances(graph = currentgraph,v=V(currentgraph)[!is.na(V(currentgraph)$id)],to=V(currentgraph)[!is.na(V(currentgraph)$id)],weights = E(currentgraph)$speed*E(currentgraph)$length)
+    rownames(dmat)<-V(currentgraph)$id[!is.na(V(currentgraph)$id)];colnames(dmat)<-V(currentgraph)$id[!is.na(V(currentgraph)$id)]
     
     access = computeAccess(accessorigdata = data.frame(id=rownames(dmat),var=rep(1,nrow(dmat)),year=rep(currentyear,nrow(dmat))),
                            #accessdestdata = data.frame(id=rownames(dmat),var=as.numeric(V(currentgraph)$pop[!is.na(V(currentgraph)$pop)]),year=rep(currentyear,nrow(dmat))) ,
@@ -116,19 +124,56 @@ for(city in cities){
     
     nwlayer = spTransform(readOGR(datadir,ptlayers[[city]]),crs(spdf))
     
+    # left_join(spdf@data,access,by=c('id'='id'))
+    
+    trnw=nwlayer[as.numeric(nwlayer$year)<=currentyear,]
+    
+    # ! there may be some connectivity issues with Guangzhou network (connection GUangzhou - Foshan?)
     map(data=access,layer=spdf,spdfid="id",dfid="id",variable="var",
-        filename=paste0(resdir,'access_',city,'_',year,'.png'),title=paste0("Accessibility"),
-        legendtitle = "Accessibility",extent=nwlayer,
-        nclass=4,
+        filename=paste0(resdir,'access_',city,'_',year,'.png'),title=paste0(city," (",currentyear,")"),
+        legendtitle = "Accessibility",extent=spdf,
+        nclass=8,
         width=15,height=15,palette='div',lwd=0.01,
+        pngResolution = 300,
         additionalLinelayers=list(
-          list(nwlayer,'blue')
+          list(trnw,'blue')
         ),
         withScale=NULL,
         legendPosition = "bottomright"
     )
     
+    
+    ######
+    # profiles
+    allpoints = left_join(spdf@data,access,by=c('id'='id'))
+    centerdist= sqrt((allpoints$x - xcenter)^2 + (allpoints$y - ycenter)^2)
+    distquantiles = c(0,quantile(centerdist,seq(0.05,1.0,0.05)))
+    
+    for(i in 2:length(distquantiles)){
+      inds = which(centerdist>distquantiles[i-1]&centerdist<=distquantiles[i]);
+      pops = append(pops,allpoints$pop[inds]);accesses=append(accesses,allpoints$var[inds]);
+      dists=append(dists,rep((distquantiles[i]+distquantiles[i-1])/2,length(inds)))
+      years=append(years,rep(year,length(inds)))
+    }
+    
   }
+  
+  plotdata=data.frame(population = pops,accessibility = accesses,distance=dists,year=as.character(years))
+  plotdata=plotdata[plotdata$distance<100000,]
+  # pop profile
+  g=ggplot(data = plotdata,aes(x=distance,y=population,group=year,color=year))
+  #g+geom_point(pch='.')+geom_smooth() # points too broad
+  ggsave(plot = g+geom_smooth()+stdtheme, filename = paste0(resdir,'popprofile-smooth_',city,'.png'),width=25,height=20,units='cm')
+  
+  #sdata = as_tibble(data.frame(population = pops,distance=dists,year=as.character(years))) %>% group_by(distance,year) %>% summarise(popsd=sd(population), population = mean(population))
+  #g=ggplot(data = sdata,aes(x=distance,y=population,group=year,color=year))
+  ##g+geom_point(pch='.')+geom_smooth()
+  #ggsave(plot = g+geom_point()+geom_errorbar(aes(ymin=population-popsd,ymax=population+popsd))+stdtheme, filename = paste0(resdir,'popprofile-sd_',city,'.png'),width=25,height=20,units='cm')
+  
+  # access profile
+  g=ggplot(data = plotdata,aes(x=distance,y=accessibility,group=year,color=year))
+  ggsave(plot = g+geom_smooth()+ggtitle(city)+stdtheme, filename = paste0(resdir,'accessprofile-smooth_',city,'.png'),width=25,height=20,units='cm')
+  
   
 }
 
